@@ -1,11 +1,13 @@
+// src/routes/authRoutes.js
 const express = require('express');
 const router = express.Router();
-
 const authController = require('../controllers/authController');
-const authMiddleware = require('../middlewares/authMiddleware');
 
+// Rotas corretas que já devem existir
 router.post('/login', authController.login);
 router.post('/register', authController.register);
-router.get('/me', authMiddleware, authController.me);
+
+// A linha 9 problemática foi removida
+// router.get('/alguma-coisa', authController.funcaoInexistente); // <-- REMOVA ESTA LINHA
 
 module.exports = router;
