@@ -4,43 +4,40 @@ require('dotenv').config();
 
 const isProd = process.env.NODE_ENV === 'production';
 
-let config;
-if (process.env.DATABASE_URL) {
-  config = {
-    connectionString: process.env.DATABASE_URL,
-  };
-} else {
-  config = {
-    host: process.env.DB_HOST || 'localhost',
-    port: Number(process.env.DB_PORT || 5432),
-    database: process.env.DB_NAME || process.env.DB_DATABASE || 'postgres',
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || '',
-  };
-}
+// This configuration is more robust.
+// It uses DATABASE_URL for production (like Render) and falls back to
+// individual environment variables for local development, which is a common pattern.
+const connectionConfig = process.env.DATABASE_URL
+  ? { connectionString: process.env.DATABASE_URL }
+  : {
+      host: process.env.DB_HOST || 'localhost',
+      port: Number(process.env.DB_PORT) || 5432,
+      database: process.env.DB_NAME || 'postgres',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || '',
+    };
+    
+const poolConfig = {
+  ...connectionConfig,
+  // In production (like on Render), SSL is required.
+  // This automatically enables it without needing a separate PGSSL variable, which is more reliable.
+  ssl: isProd ? { rejectUnauthorized: false } : undefined,
+};
 
-if (isProd) {
-  config.ssl = { rejectUnauthorized: false };
-}
+const pool = new Pool(poolConfig);
 
-const pool = new Pool(config);
-
-pool.on('error', (err) => {
-  console.error('[PG POOL ERROR]', err.message);
+pool.on('connect', () => {
+  console.log('Conectado ao banco de dados!');
 });
 
-async function ping() {
-  const client = await pool.connect();
-  try {
-    const r = await client.query('SELECT now() as now');
-    return r.rows[0].now;
-  } finally {
-    client.release();
-  }
-}
+pool.on('error', (err, client) => {
+  console.error('Erro inesperado no cliente ocioso do banco de dados', err);
+  // Avoid exiting the process on idle client errors, as the pool can often recover.
+});
 
 module.exports = {
+  // Uma função wrapper em torno de pool.query para facilitar o uso
   query: (text, params) => pool.query(text, params),
-  pool,
-  ping,
+  // Expõe o pool diretamente para operações mais complexas como transações
+  pool: pool,
 };
