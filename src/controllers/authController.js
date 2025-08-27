@@ -19,6 +19,9 @@ const getJwtSecret = () => {
     if (secret && secret.length > 0) {
         return secret;
     }
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('JWT_SECRET não está definido no ambiente de produção.');
+    }
     console.warn('WARNING: JWT_SECRET environment variable not set or empty. Using a default, insecure key for development. This is NOT safe for production.');
     return 'your_default_secret_key_for_development';
 };
