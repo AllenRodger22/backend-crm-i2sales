@@ -303,7 +303,7 @@ exports.updateClient = async (req, res) => {
   const fields = req.body;
 
   if (Object.keys(fields).length === 0) {
-    return res.status(400).json({ error: 'Request body cannot be empty.' });
+    return res.status(400).json({ error: 'O corpo da requisição não pode estar vazio.' });
   }
   
   try {
