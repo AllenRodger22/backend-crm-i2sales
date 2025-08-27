@@ -2,23 +2,7 @@
 const db = require('../config/database');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-
-// Helper para obter o segredo do JWT.
-// Em produção: exige JWT_SECRET definido.
-// Em dev: avisa e usa uma chave fraca de desenvolvimento.
-const getJwtSecret = () => {
-  const secret = process.env.JWT_SECRET;
-  if (secret && secret.length > 0) return secret;
-
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('JWT_SECRET não está definido no ambiente de produção.');
-  }
-
-  console.warn(
-    'WARNING: JWT_SECRET não definido ou vazio. Usando uma chave INSEGURA de desenvolvimento. NÃO use isso em produção.'
-  );
-  return 'pikachu';
-};
+const { getJwtSecret } = require('../utils/jwt');
 
 // Helper: snake_case -> camelCase para o frontend
 const snakeToCamel = (str) =>
@@ -93,7 +77,7 @@ exports.login = async (req, res) => {
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role,
+      role: user.role || 'BROKER',
     };
 
     return res.status(200).json({ token, user: userResponse });
@@ -109,16 +93,16 @@ exports.login = async (req, res) => {
 exports.register = async (req, res) => {
   const { name, email, password, role } = req.body || {};
 
-  if (!name || !email || !password || !role) {
-    return res.status(400).json({ message: 'Nome, email, senha e cargo são obrigatórios.' });
-  }
-
-  const validRoles = ['BROKER', 'MANAGER', 'ADMIN'];
-  if (!validRoles.includes(role)) {
-    return res.status(400).json({ message: 'Cargo especificado é inválido.' });
+  if (!name || !email || !password) {
+    return res.status(400).json({ message: 'Nome, email e senha são obrigatórios.' });
   }
 
   const processedEmail = String(email).trim().toLowerCase();
+  const roleValue = String(role || 'BROKER').trim().toUpperCase();
+  const validRoles = ['BROKER', 'MANAGER', 'ADMIN'];
+  if (!validRoles.includes(roleValue)) {
+    return res.status(400).json({ message: 'Cargo especificado é inválido.' });
+  }
 
   try {
     const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [processedEmail]);
@@ -130,7 +114,7 @@ exports.register = async (req, res) => {
 
     const insert = await db.query(
       'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
-      [name, processedEmail, hashedPassword, role]
+      [name, processedEmail, hashedPassword, roleValue]
     );
 
     return res.status(201).json({ user: insert.rows[0] });
