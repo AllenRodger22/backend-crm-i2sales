@@ -1,8 +1,6 @@
 // src/middlewares/authMiddleware.js
 const jwt = require('jsonwebtoken');
-
-const getJwtSecret = () =>
-  process.env.JWT_SECRET || 'your_default_secret_key_for_development';
+const { getJwtSecret } = require('../utils/jwt');
 
 module.exports = (req, res, next) => {
   const authHeader = req.headers.authorization || '';
@@ -17,7 +15,7 @@ module.exports = (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, getJwtSecret());
 
     // payload pode vir como { id, role } ou { user: { id, role } }
     const u = payload.user || payload;
