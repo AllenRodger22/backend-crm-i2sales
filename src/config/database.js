@@ -2,22 +2,53 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-const url = process.env.DATABASE_URL || '';
-const needsSSL =
-  process.env.PGSSL === 'require' ||
-  /\b(supabase|neon|render|timescaledb|aws|azure)\b/i.test(url) ||
-  /sslmode=require/i.test(url);
+const hasUrl = !!process.env.DATABASE_URL;
+const isSupabaseHost = (h) => /supabase\.co$/i.test(h || '');
 
-const pool = new Pool({
-  connectionString: url,
-  ssl: needsSSL ? { rejectUnauthorized: false } : false,
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-  keepAlive: true,
-});
+let config;
 
-// loga qualquer erro de conexão/idle
+if (hasUrl) {
+  // MODO 1: CONNECTION STRING ÚNICA
+  const url = process.env.DATABASE_URL;
+  const needsSSL =
+    process.env.PGSSL === 'require' ||
+    /sslmode=require/i.test(url) ||
+    /supabase\.co/i.test(url);
+
+  config = {
+    connectionString: url,
+    ssl: needsSSL ? { rejectUnauthorized: false } : false,
+  };
+} else {
+  // MODO 2: CAMPOS SOLTOS
+  const host = process.env.DB_HOST;
+  const port = Number(process.env.DB_PORT || 5432);
+  const database = process.env.DB_NAME || process.env.DB_DATABASE || 'postgres';
+  const user = process.env.DB_USER || 'postgres';
+  const password = process.env.DB_PASSWORD; // aqui NÃO precisa URL-encode
+
+  const needsSSL =
+    process.env.PGSSL === 'require' || isSupabaseHost(host);
+
+  config = {
+    host,
+    port,
+    database,
+    user,
+    password,
+    ssl: needsSSL ? { rejectUnauthorized: false } : false,
+  };
+}
+
+// opções adicionais (bons defaults)
+config.max = 10;
+config.idleTimeoutMillis = 30000;
+config.connectionTimeoutMillis = 10000;
+config.keepAlive = true;
+
+const pool = new Pool(config);
+
+// loga erros de conexões ociosas
 pool.on('error', (err) => {
   console.error('[PG POOL ERROR]', err.message);
 });
