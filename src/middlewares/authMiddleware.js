@@ -11,8 +11,15 @@ module.exports = (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // Adiciona os dados do usuário (id, role) ao objeto da requisição
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+
+    // payload pode vir como { id, role } ou { user: { id, role } }
+    const u = payload.user || payload;
+    if (!u?.id) {
+      return res.status(401).json({ error: 'Token sem id de usuário.' });
+    }
+
+    req.user = { id: u.id, role: u.role || 'BROKER' };
     next();
   } catch (error) {
     res.status(401).json({ error: 'Token inválido.' });
