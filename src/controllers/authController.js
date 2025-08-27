@@ -1,17 +1,7 @@
 // src/controllers/authController.js
 const db = require('../config/database');
-const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-
-// AVISO: Usar um 'salt' estático é altamente inseguro e não é recomendado para produção.
-const HASH_SEED = 'pikachu';
-
-// Helper para gerar o hash da senha com SHA-256 + salt estático.
-const hashPassword = (password) => {
-  const hash = crypto.createHash('sha256');
-  hash.update(password + HASH_SEED);
-  return hash.digest('hex');
-};
 
 // Helper para obter o segredo do JWT.
 // Em produção: exige JWT_SECRET definido.
@@ -19,9 +9,7 @@ const hashPassword = (password) => {
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET;
 
-  if (secret && secret.length > 0) {
-    return secret;
-  }
+  if (secret && secret.length > 0) return secret;
 
   if (process.env.NODE_ENV === 'production') {
     throw new Error('JWT_SECRET não está definido no ambiente de produção.');
@@ -33,7 +21,7 @@ const getJwtSecret = () => {
   return 'your_default_secret_key_for_development';
 };
 
-// Helper to convert snake_case from DB to camelCase for the frontend
+// Helper: snake_case -> camelCase para o frontend
 const snakeToCamel = (str) =>
   str.replace(/([-_][a-z])/g, (g) => g.toUpperCase().replace('_', ''));
 
@@ -72,22 +60,72 @@ exports.login = async (req, res) => {
     }
 
     const dbPasswordHash = (user.password_hash || '').trim();
-    let isMatch = false;
 
-    if (dbPasswordHash.startsWith('$2')) {
-      // bcrypt hash
-      const bcrypt = require('bcrypt');
-      isMatch = await bcrypt.compare(password, dbPasswordHash);
-    } else {
-      // sha256 + seed
-      const hashedProvidedPassword = hashPassword(password);
-      isMatch = hashedProvidedPassword === dbPasswordHash;
+    // 1) Tenta validar via bcrypt (padrão atual)
+    let isMatch = await bcrypt.compare(password, dbPasswordHash);
 
-      // --- GRACEFUL PASSWORD MIGRATION ---
-      if (!isMatch && password === dbPasswordHash) {
-        console.log(`[${req.id}] Plaintext password detected for user ${email}. Upgrading hash...`);
-        await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedProvidedPassword, user.id]);
-        isMatch = true;
-      }
-      // --- END MIGRATION ---
+    // 2) Migração graciosa: se falhar e a senha salva por acaso for plaintext (legado),
+    // atualiza para bcrypt e autentica.
+    if (!isMatch && password === dbPasswordHash) {
+      console.log(`[${req.id || 'auth'}] Plaintext password detected for user ${email}. Upgrading hash...`);
+      const newHash = await bcrypt.hash(password, 10);
+      await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, user.id]);
+      isMatch = true;
     }
+
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Credenciais inválidas.' });
+    }
+
+    const token = jwt.sign({ id: user.id, role: user.role }, getJwtSecret(), { expiresIn: '1d' });
+
+    const userResponse = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    };
+
+    res.status(200).json({ token, user: userResponse });
+  } catch (error) {
+    console.error(`[${req.id || 'auth'}] Erro de login:`, error);
+    return res.status(500).json({
+      message: 'Erro de servidor durante o login.',
+      detail: error.message,
+    });
+  }
+};
+
+exports.register = async (req, res) => {
+  const { name, email, password, role } = req.body || {};
+
+  if (!name || !email || !password || !role) {
+    return res.status(400).json({ message: 'Nome, email, senha e cargo são obrigatórios.' });
+  }
+
+  const validRoles = ['BROKER', 'MANAGER', 'ADMIN'];
+  if (!validRoles.includes(role)) {
+    return res.status(400).json({ message: 'Cargo especificado é inválido.' });
+  }
+
+  const processedEmail = email.trim().toLowerCase();
+
+  try {
+    const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [processedEmail]);
+    if (existingUser.rows.length > 0) {
+      return res.status(409).json({ message: 'Usuário com este email já existe.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const { rows } = await db.query(
+      'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
+      [name, processedEmail, hashedPassword, role]
+    );
+
+    res.status(201).json(convertObjectKeys(rows[0], snakeToCamel));
+  } catch (error) {
+    console.error(`[${req.id || 'auth'}] Erro no registro:`, error);
+    res.status(500).json({ message: 'Erro de servidor durante o registro.' });
+  }
+};
