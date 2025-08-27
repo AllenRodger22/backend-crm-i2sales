@@ -1,38 +1,33 @@
 // src/controllers/authController.js
 const db = require('../config/database');
-const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
-// AVISO: Usar um 'salt' estático é altamente inseguro e não é recomendado para produção.
-const HASH_SEED = 'pikachu';
-
-// Helper para gerar o hash da senha com SHA-256 + salt estático.
-const hashPassword = (password) => {
-  const hash = crypto.createHash('sha256');
-  hash.update(password + HASH_SEED);
-  return hash.digest('hex');
-};
-
-// Helper to get a valid JWT secret, with a fallback for development.
+// Helper para obter o segredo do JWT.
+// Em produção: exige JWT_SECRET definido.
+// Em dev: avisa e usa uma chave fraca de desenvolvimento.
 const getJwtSecret = () => {
-    const secret = process.env.JWT_SECRET;
-    if (secret && secret.length > 0) {
-        return secret;
-    }
-    console.warn('WARNING: JWT_SECRET environment variable not set or empty. Using a default, insecure key for development. This is NOT safe for production.');
-    return 'your_default_secret_key_for_development';
+  const secret = process.env.JWT_SECRET;
+
+  if (secret && secret.length > 0) return secret;
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET não está definido no ambiente de produção.');
+  }
+
+  console.warn(
+    'WARNING: JWT_SECRET não definido ou vazio. Usando uma chave INSEGURA de desenvolvimento. NÃO use isso em produção.'
+  );
+  return 'your_default_secret_key_for_development';
 };
 
-// Helper to convert snake_case from DB to camelCase for the frontend
-const snakeToCamel = (str) => str.replace(/([-_][a-z])/g, (g) => g.toUpperCase().replace('_', ''));
+// Helper: snake_case -> camelCase para o frontend
+const snakeToCamel = (str) =>
+  str.replace(/([-_][a-z])/g, (g) => g.toUpperCase().replace('_', ''));
 
 const convertObjectKeys = (obj, converter) => {
-  if (obj === null || typeof obj !== 'object' || obj instanceof Date) {
-    return obj;
-  }
-  if (Array.isArray(obj)) {
-    return obj.map((item) => convertObjectKeys(item, converter));
-  }
+  if (obj === null || typeof obj !== 'object' || obj instanceof Date) return obj;
+  if (Array.isArray(obj)) return obj.map((item) => convertObjectKeys(item, converter));
   const newObj = {};
   for (const key in obj) {
     if (Object.prototype.hasOwnProperty.call(obj, key)) {
@@ -43,9 +38,8 @@ const convertObjectKeys = (obj, converter) => {
   return newObj;
 };
 
-
 exports.login = async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password } = req.body || {};
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Email e senha são obrigatórios.' });
@@ -60,26 +54,32 @@ exports.login = async (req, res) => {
     }
 
     const user = rows[0];
-    
+
     if (!user.password_hash) {
       return res.status(401).json({ message: 'Credenciais inválidas.' });
     }
 
-    const dbPasswordHash = user.password_hash.trim();
-    const hashedProvidedPassword = hashPassword(password);
-    let isMatch = (hashedProvidedPassword === dbPasswordHash);
+    const dbPasswordHash = (user.password_hash || '').trim();
 
-    // --- GRACEFUL PASSWORD MIGRATION ---
-    // If hash check fails, check for plaintext password match for legacy users.
+    // 1) Tenta validar via bcrypt (padrão atual)
+    let isMatch = await bcrypt.compare(password, dbPasswordHash);
+
+    // 2) Migração graciosa: se falhar e a senha salva por acaso for plaintext (legado),
+    // atualiza para bcrypt e autentica.
     if (!isMatch && password === dbPasswordHash) {
-        console.log(`Plaintext password detected for user ${email}. Upgrading hash...`);
-        // If they match, securely upgrade the hash in the database.
-        await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedProvidedPassword, user.id]);
-        isMatch = true; // Mark as a match to allow login.
+      console.log(`[${req.id || 'auth'}] Plaintext password detected for user ${email}. Upgrading hash...`);
+      const newHash = await bcrypt.hash(password, 10);
+      await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, user.id]);
+      isMatch = true;
     }
-    // --- END MIGRATION ---
 
     if (!isMatch) {
+      return res.status(401).json({ message: 'Credenciais inválidas.' });
+    }
+
+    const token = jwt.sign({ id: user.id, role: user.role }, getJwtSecret(), { expiresIn: '1d' });
+
+   if (!isMatch) {
       return res.status(401).json({ message: 'Credenciais inválidas.' });
     }
     
@@ -131,13 +131,3 @@ exports.register = async (req, res) => {
 
         const { rows } = await db.query(
             'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
-            [name, processedEmail, hashedPassword, role]
-        );
-
-        res.status(201).json(convertObjectKeys(rows[0], snakeToCamel));
-
-    } catch (error) {
-        console.error('Erro no registro:', error);
-        res.status(500).json({ message: 'Erro de servidor durante o registro.' });
-    }
-};

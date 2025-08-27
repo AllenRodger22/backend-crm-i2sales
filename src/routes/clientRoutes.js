@@ -3,9 +3,6 @@ const router = express.Router();
 
 const clientController = require('../controllers/clientController');
 const interactionRoutes = require('./interactionRoutes');
-const authMiddleware = require('../middlewares/authMiddleware');
-
-router.use(authMiddleware);
 
 // CSV
 router.post('/import', clientController.upload.single('file'), clientController.importClients);
