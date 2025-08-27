@@ -8,7 +8,6 @@ const jwt = require('jsonwebtoken');
 // Em dev: avisa e usa uma chave fraca de desenvolvimento.
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET;
-
   if (secret && secret.length > 0) return secret;
 
   if (process.env.NODE_ENV === 'production') {
@@ -18,7 +17,7 @@ const getJwtSecret = () => {
   console.warn(
     'WARNING: JWT_SECRET não definido ou vazio. Usando uma chave INSEGURA de desenvolvimento. NÃO use isso em produção.'
   );
-  return 'your_default_secret_key_for_development';
+  return 'pikachu';
 };
 
 // Helper: snake_case -> camelCase para o frontend
@@ -45,7 +44,7 @@ exports.login = async (req, res) => {
     return res.status(400).json({ message: 'Email e senha são obrigatórios.' });
   }
 
-  const processedEmail = email.trim().toLowerCase();
+  const processedEmail = String(email).trim().toLowerCase();
 
   try {
     const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [processedEmail]);
@@ -61,13 +60,20 @@ exports.login = async (req, res) => {
 
     const dbPasswordHash = (user.password_hash || '').trim();
 
-    // 1) Tenta validar via bcrypt (padrão atual)
-    let isMatch = await bcrypt.compare(password, dbPasswordHash);
+    // 1) Valida via bcrypt (padrão atual)
+    let isMatch = false;
+    try {
+      isMatch = await bcrypt.compare(password, dbPasswordHash);
+    } catch (_e) {
+      isMatch = false;
+    }
 
-    // 2) Migração graciosa: se falhar e a senha salva por acaso for plaintext (legado),
+    // 2) Migração graciosa: se falhar e a senha salva for plaintext (legado),
     // atualiza para bcrypt e autentica.
     if (!isMatch && password === dbPasswordHash) {
-      console.log(`[${req.id || 'auth'}] Plaintext password detected for user ${email}. Upgrading hash...`);
+      console.log(
+        `[${req.id || 'auth'}] Plaintext password detected for user ${processedEmail}. Upgrading hash...`
+      );
       const newHash = await bcrypt.hash(password, 10);
       await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, user.id]);
       isMatch = true;
@@ -77,18 +83,12 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: 'Credenciais inválidas.' });
     }
 
-    const token = jwt.sign({ id: user.id, role: user.role }, getJwtSecret(), { expiresIn: '1d' });
-
-   if (!isMatch) {
-      return res.status(401).json({ message: 'Credenciais inválidas.' });
-    }
-    
     const token = jwt.sign(
       { id: user.id, role: user.role },
       getJwtSecret(),
       { expiresIn: '1d' }
     );
-    
+
     const userResponse = {
       id: user.id,
       name: user.name,
@@ -96,38 +96,49 @@ exports.login = async (req, res) => {
       role: user.role,
     };
 
-    res.status(200).json({ token, user: userResponse });
-
+    return res.status(200).json({ token, user: userResponse });
   } catch (error) {
-  console.error('Erro de login:', error);
-  return res.status(500).json({
-    message: 'Erro de servidor durante o login.',
-    detail: error.message,           // 👈 mostra o motivo (ECONNREFUSED, self signed, relation não existe, etc.)
-  });
+    console.error('Erro de login:', error);
+    return res.status(500).json({
+      message: 'Erro de servidor durante o login.',
+      detail: error.message, // ajuda a diagnosticar (ECONNREFUSED, self signed, relation inexistente, etc.)
+    });
   }
 };
 
 exports.register = async (req, res) => {
-    const { name, email, password, role } = req.body;
+  const { name, email, password, role } = req.body || {};
 
-    if (!name || !email || !password || !role) {
-        return res.status(400).json({ message: 'Nome, email, senha e cargo são obrigatórios.' });
+  if (!name || !email || !password || !role) {
+    return res.status(400).json({ message: 'Nome, email, senha e cargo são obrigatórios.' });
+  }
+
+  const validRoles = ['BROKER', 'MANAGER', 'ADMIN'];
+  if (!validRoles.includes(role)) {
+    return res.status(400).json({ message: 'Cargo especificado é inválido.' });
+  }
+
+  const processedEmail = String(email).trim().toLowerCase();
+
+  try {
+    const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [processedEmail]);
+    if (existingUser.rows.length > 0) {
+      return res.status(409).json({ message: 'Usuário com este email já existe.' });
     }
-    
-    const validRoles = ['BROKER', 'MANAGER', 'ADMIN'];
-    if (!validRoles.includes(role)) {
-        return res.status(400).json({ message: 'Cargo especificado é inválido.' });
-    }
 
-    const processedEmail = email.trim().toLowerCase();
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    try {
-        const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [processedEmail]);
-        if (existingUser.rows.length > 0) {
-            return res.status(409).json({ message: 'Usuário com este email já existe.' });
-        }
+    const insert = await db.query(
+      'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
+      [name, processedEmail, hashedPassword, role]
+    );
 
-        const hashedPassword = hashPassword(password);
-
-        const { rows } = await db.query(
-            'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
+    return res.status(201).json({ user: insert.rows[0] });
+  } catch (error) {
+    console.error('Erro de registro:', error);
+    return res.status(500).json({
+      message: 'Erro de servidor durante o registro.',
+      detail: error.message,
+    });
+  }
+};
