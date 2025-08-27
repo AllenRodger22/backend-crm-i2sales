@@ -99,10 +99,12 @@ exports.login = async (req, res) => {
     res.status(200).json({ token, user: userResponse });
 
   } catch (error) {
-    console.error('Erro de login:', error);
-    res.status(500).json({ message: 'Erro de servidor durante o login.' });
-  }
-};
+  console.error('Erro de login:', error);
+  return res.status(500).json({
+    message: 'Erro de servidor durante o login.',
+    detail: error.message,           // 👈 mostra o motivo (ECONNREFUSED, self signed, relation não existe, etc.)
+  });
+}
 
 exports.register = async (req, res) => {
     const { name, email, password, role } = req.body;
