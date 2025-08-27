@@ -79,6 +79,16 @@ exports.login = async (req, res) => {
 
     const token = jwt.sign({ id: user.id, role: user.role }, getJwtSecret(), { expiresIn: '1d' });
 
+   if (!isMatch) {
+      return res.status(401).json({ message: 'Credenciais inválidas.' });
+    }
+    
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      getJwtSecret(),
+      { expiresIn: '1d' }
+    );
+    
     const userResponse = {
       id: user.id,
       name: user.name,
@@ -87,45 +97,37 @@ exports.login = async (req, res) => {
     };
 
     res.status(200).json({ token, user: userResponse });
+
   } catch (error) {
-    console.error(`[${req.id || 'auth'}] Erro de login:`, error);
-    return res.status(500).json({
-      message: 'Erro de servidor durante o login.',
-      detail: error.message,
-    });
+  console.error('Erro de login:', error);
+  return res.status(500).json({
+    message: 'Erro de servidor durante o login.',
+    detail: error.message,           // 👈 mostra o motivo (ECONNREFUSED, self signed, relation não existe, etc.)
+  });
   }
 };
 
 exports.register = async (req, res) => {
-  const { name, email, password, role } = req.body || {};
+    const { name, email, password, role } = req.body;
 
-  if (!name || !email || !password || !role) {
-    return res.status(400).json({ message: 'Nome, email, senha e cargo são obrigatórios.' });
-  }
-
-  const validRoles = ['BROKER', 'MANAGER', 'ADMIN'];
-  if (!validRoles.includes(role)) {
-    return res.status(400).json({ message: 'Cargo especificado é inválido.' });
-  }
-
-  const processedEmail = email.trim().toLowerCase();
-
-  try {
-    const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [processedEmail]);
-    if (existingUser.rows.length > 0) {
-      return res.status(409).json({ message: 'Usuário com este email já existe.' });
+    if (!name || !email || !password || !role) {
+        return res.status(400).json({ message: 'Nome, email, senha e cargo são obrigatórios.' });
+    }
+    
+    const validRoles = ['BROKER', 'MANAGER', 'ADMIN'];
+    if (!validRoles.includes(role)) {
+        return res.status(400).json({ message: 'Cargo especificado é inválido.' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const processedEmail = email.trim().toLowerCase();
 
-    const { rows } = await db.query(
-      'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
-      [name, processedEmail, hashedPassword, role]
-    );
+    try {
+        const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [processedEmail]);
+        if (existingUser.rows.length > 0) {
+            return res.status(409).json({ message: 'Usuário com este email já existe.' });
+        }
 
-    res.status(201).json(convertObjectKeys(rows[0], snakeToCamel));
-  } catch (error) {
-    console.error(`[${req.id || 'auth'}] Erro no registro:`, error);
-    res.status(500).json({ message: 'Erro de servidor durante o registro.' });
-  }
-};
+        const hashedPassword = hashPassword(password);
+
+        const { rows } = await db.query(
+            'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
