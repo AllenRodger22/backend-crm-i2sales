@@ -104,7 +104,8 @@ exports.login = async (req, res) => {
     message: 'Erro de servidor durante o login.',
     detail: error.message,           // 👈 mostra o motivo (ECONNREFUSED, self signed, relation não existe, etc.)
   });
-}
+  }
+};
 
 exports.register = async (req, res) => {
     const { name, email, password, role } = req.body;
