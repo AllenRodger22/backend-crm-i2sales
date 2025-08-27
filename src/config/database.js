@@ -41,7 +41,7 @@ const baseConfig = rawUrl
       password: process.env.DB_PASSWORD || '',
     };
 
-// 2) Resolve o hostname do Supabase para IPv4 (A) e usa o IP direto
+// 2) Resolve o hostname para IPv4 (A) e usa o IP direto
 async function resolveIPv4Host(host) {
   try {
     const A = await dns.promises.resolve4(host);
@@ -57,13 +57,24 @@ async function resolveIPv4Host(host) {
   }
 }
 
+const envIPv4 = process.env.DB_HOST_IPV4;
+
 let pool;
 
 // Inicializa o pool com IPv4 “forçado”
 async function initPool() {
-  const hostIPv4 = await resolveIPv4Host(baseConfig.host);
+  const hostIPv4 = envIPv4 || (await resolveIPv4Host(baseConfig.host));
+  if (envIPv4) {
+    log('Usando DB_HOST_IPV4:', envIPv4);
+  } else if (hostIPv4.includes(':')) {
+    // ainda é um IPv6, provavelmente sem conectividade
+    warn(
+      'Host IPv6 detectado. Defina DB_HOST_IPV4 com um endereço alcançável para evitar ENETUNREACH.'
+    );
+  }
+
   const config = {
-    host: hostIPv4,                     // ← IP v4 direto
+    host: hostIPv4, // ← IP v4 direto
     port: baseConfig.port,
     database: baseConfig.database,
     user: baseConfig.user,

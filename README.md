@@ -7,6 +7,7 @@ API em Node.js + Express + PostgreSQL para gerenciamento de clientes e funil de 
 Configure um arquivo `.env` com as variáveis abaixo:
 
 - `DATABASE_URL` **ou** `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
+- `DB_HOST_IPV4` – opcional; endereço IPv4 forçado caso o host resolva apenas em IPv6
 - `JWT_SECRET` – chave para assinar os tokens JWT
 - `NODE_ENV` – `production` habilita SSL no banco
 - `PORT` – porta do servidor (opcional)
