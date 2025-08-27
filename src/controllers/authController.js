@@ -13,12 +13,22 @@ const hashPassword = (password) => {
   return hash.digest('hex');
 };
 
-// Helper to get a valid JWT secret, with a fallback for development.
+// Helper para obter o segredo do JWT.
+// Em produção: exige JWT_SECRET definido.
+// Em dev: avisa e usa uma chave fraca de desenvolvimento.
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET;
-  if (secret && secret.length > 0) return secret;
+
+  if (secret && secret.length > 0) {
+    return secret;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET não está definido no ambiente de produção.');
+  }
+
   console.warn(
-    'WARNING: JWT_SECRET environment variable not set or empty. Using a default, insecure key for development. This is NOT safe for production.'
+    'WARNING: JWT_SECRET não definido ou vazio. Usando uma chave INSEGURA de desenvolvimento. NÃO use isso em produção.'
   );
   return 'your_default_secret_key_for_development';
 };
@@ -61,7 +71,7 @@ exports.login = async (req, res) => {
       return res.status(401).json({ message: 'Credenciais inválidas.' });
     }
 
-    const dbPasswordHash = user.password_hash.trim();
+    const dbPasswordHash = (user.password_hash || '').trim();
     let isMatch = false;
 
     if (dbPasswordHash.startsWith('$2')) {
@@ -81,83 +91,3 @@ exports.login = async (req, res) => {
       }
       // --- END MIGRATION ---
     }
-
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Credenciais inválidas.' });
-    }
-
-    const token = jwt.sign(
-      { id: user.id, role: user.role },
-      getJwtSecret(),
-      { expiresIn: '1d' }
-    );
-
-    const userResponse = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    };
-
-    res.status(200).json({ token, user: userResponse });
-  } catch (error) {
-    console.error(`[${req.id}] Erro de login:`, error);
-    return res.status(500).json({
-      message: 'Erro de servidor durante o login.',
-      detail: error.message,
-    });
-  }
-};
-
-exports.register = async (req, res) => {
-  const { name, email, password, role } = req.body || {};
-
-  if (!name || !email || !password || !role) {
-    return res
-      .status(400)
-      .json({ message: 'Nome, email, senha e cargo são obrigatórios.' });
-  }
-
-  const validRoles = ['BROKER', 'MANAGER', 'ADMIN'];
-  if (!validRoles.includes(role)) {
-    return res.status(400).json({ message: 'Cargo especificado é inválido.' });
-  }
-
-  const processedEmail = email.trim().toLowerCase();
-
-  try {
-    const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [processedEmail]);
-    if (existingUser.rows.length > 0) {
-      return res.status(409).json({ message: 'Usuário com este email já existe.' });
-    }
-
-    const hashedPassword = hashPassword(password);
-
-    const { rows } = await db.query(
-      'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
-      [name, processedEmail, hashedPassword, role]
-    );
-
-    res.status(201).json(convertObjectKeys(rows[0], snakeToCamel));
-  } catch (error) {
-    console.error(`[${req.id}] Erro no registro:`, error);
-    res.status(500).json({ message: 'Erro de servidor durante o registro.' });
-  }
-};
-
-exports.me = async (req, res) => {
-  try {
-    const { rows } = await db.query(
-      'SELECT id, name, email, role FROM users WHERE id = $1',
-      [req.user.id]
-    );
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Usuário não encontrado.' });
-    }
-    res.status(200).json(convertObjectKeys(rows[0], snakeToCamel));
-  } catch (error) {
-    console.error(`[${req.id}] Erro ao buscar usuário:`, error);
-    res.status(500).json({ message: 'Erro de servidor ao buscar usuário.' });
-  }
-};
-
