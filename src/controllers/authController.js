@@ -1,17 +1,7 @@
 // src/controllers/authController.js
 const db = require('../config/database');
-const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-
-// AVISO: Usar um 'salt' estático é altamente inseguro e não é recomendado para produção.
-const HASH_SEED = 'pikachu';
-
-// Helper para gerar o hash da senha com SHA-256 + salt estático.
-const hashPassword = (password) => {
-  const hash = crypto.createHash('sha256');
-  hash.update(password + HASH_SEED);
-  return hash.digest('hex');
-};
+const bcrypt = require('bcrypt');
 
 // Helper to get a valid JWT secret, with a fallback for development.
 const getJwtSecret = () => {
@@ -66,15 +56,15 @@ exports.login = async (req, res) => {
     }
 
     const dbPasswordHash = user.password_hash.trim();
-    const hashedProvidedPassword = hashPassword(password);
-    let isMatch = (hashedProvidedPassword === dbPasswordHash);
+    let isMatch = await bcrypt.compare(password, dbPasswordHash);
 
     // --- GRACEFUL PASSWORD MIGRATION ---
     // If hash check fails, check for plaintext password match for legacy users.
     if (!isMatch && password === dbPasswordHash) {
         console.log(`Plaintext password detected for user ${email}. Upgrading hash...`);
         // If they match, securely upgrade the hash in the database.
-        await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedProvidedPassword, user.id]);
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hashedPassword, user.id]);
         isMatch = true; // Mark as a match to allow login.
     }
     // --- END MIGRATION ---
@@ -104,9 +94,9 @@ exports.login = async (req, res) => {
     message: 'Erro de servidor durante o login.',
     detail: error.message,           // 👈 mostra o motivo (ECONNREFUSED, self signed, relation não existe, etc.)
   });
-}
+  };
 
-exports.register = async (req, res) => {
+  exports.register = async (req, res) => {
     const { name, email, password, role } = req.body;
 
     if (!name || !email || !password || !role) {
@@ -126,7 +116,7 @@ exports.register = async (req, res) => {
             return res.status(409).json({ message: 'Usuário com este email já existe.' });
         }
 
-        const hashedPassword = hashPassword(password);
+        const hashedPassword = await bcrypt.hash(password, 10);
 
         const { rows } = await db.query(
             'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
